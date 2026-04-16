@@ -445,17 +445,35 @@ def _extract_squad_players(team_block) -> list[dict]:
 import keys as _keymod
 
 _kdata_outer = _keymod.load_keys()
-_active_label = (
-    _kdata_outer["keys"][_kdata_outer.get("active", 0)]["label"]
-    if _kdata_outer.get("keys") else "no key set"
-)
+_cloud_key = _keymod.streamlit_secret_key()
+if _cloud_key:
+    _active_label = "from Streamlit secrets ✓"
+elif _kdata_outer.get("keys"):
+    _active_label = _kdata_outer["keys"][_kdata_outer.get("active", 0)]["label"]
+else:
+    _active_label = "no key set"
 
 with st.sidebar.expander(f"🔑 RapidAPI keys  ·  active: {_active_label}",
                          expanded=False):
     _kdata = _keymod.load_keys()
     _klist = _kdata.get("keys") or []
 
-    if not _klist:
+    # Show cloud secret status FIRST — most important when deployed
+    if _cloud_key:
+        st.markdown(f"""
+        <div style="background: rgba(122,203,106,0.10); border-left: 3px solid #7bcb6a;
+                    padding: 8px 10px; font-family:'JetBrains Mono',monospace;
+                    font-size:11px; color:var(--paper); margin-bottom:10px;">
+          <b style="color:#7bcb6a;">✓ STREAMLIT SECRET LOADED</b><br>
+          <span style="color:var(--muted);">
+            RAPIDAPI_KEY = …{_cloud_key[-6:]}<br>
+            This key is being used for ALL API calls. To rotate it, edit the
+            Secrets section in your Streamlit Cloud app settings.
+          </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if not _klist and not _cloud_key:
         st.markdown(
             "<div style='color:var(--muted); font-size:12px;'>"
             "No keys yet. Sign up free at "
@@ -463,6 +481,14 @@ with st.sidebar.expander(f"🔑 RapidAPI keys  ·  active: {_active_label}",
             "style='color:var(--gold);' target='_blank'>"
             "rapidapi.com/.../cricket-live-line-advance</a> "
             "and paste the key below.</div>",
+            unsafe_allow_html=True,
+        )
+    elif not _klist and _cloud_key:
+        st.markdown(
+            "<div style='color:var(--muted); font-size:12px;'>"
+            "No additional local keys stored. The cloud secret above is "
+            "being used. You can add more keys below to rotate between them."
+            "</div>",
             unsafe_allow_html=True,
         )
     else:

@@ -76,36 +76,50 @@ def save_keys(data: dict) -> None:
         json.dump(data, fh, indent=2)
 
 
+def streamlit_secret_key() -> Optional[str]:
+    """Read RAPIDAPI_KEY from Streamlit secrets (Cloud deploy). None if absent."""
+    try:
+        import streamlit as st
+    except Exception:
+        return None
+    if not hasattr(st, "secrets"):
+        return None
+    # Try multiple access patterns — Streamlit secrets are picky
+    for accessor in (
+        lambda: st.secrets["RAPIDAPI_KEY"],   # dict-style
+        lambda: st.secrets.RAPIDAPI_KEY,       # attr-style
+        lambda: st.secrets.get("RAPIDAPI_KEY"),  # .get
+    ):
+        try:
+            v = accessor()
+            if v:
+                return str(v).strip()
+        except Exception:
+            continue
+    return None
+
+
 def active_key() -> Optional[str]:
     """
     Return the currently-active API key.
 
     Resolution order:
-      1. Streamlit secrets (st.secrets["RAPIDAPI_KEY"]) — set in Streamlit
-         Cloud's Secrets dashboard for prod deploys
-      2. keys.json on disk — interactive use via the dashboard
-      3. None
+      1. Streamlit Cloud secret  (RAPIDAPI_KEY in Secrets dashboard)
+      2. Active key from keys.json   (local interactive use)
+      3. RAPIDAPI_KEY env var       (legacy .env file)
+      4. None
     """
-    # 1) Streamlit Cloud secret store (only available when running under streamlit)
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets"):
-            try:
-                k = st.secrets.get("RAPIDAPI_KEY")
-                if k:
-                    return k
-            except Exception:
-                pass
-    except Exception:
-        pass
+    k = streamlit_secret_key()
+    if k:
+        return k
 
-    # 2) Local keys.json
     data = load_keys()
     keys = data.get("keys") or []
-    if not keys:
-        return None
-    idx = max(0, min(data.get("active", 0), len(keys) - 1))
-    return keys[idx]["key"]
+    if keys:
+        idx = max(0, min(data.get("active", 0), len(keys) - 1))
+        return keys[idx]["key"]
+
+    return os.environ.get("RAPIDAPI_KEY")
 
 
 def add_key(label: str, key: str, make_active: bool = True) -> dict:
