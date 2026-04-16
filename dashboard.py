@@ -446,32 +446,45 @@ import keys as _keymod
 
 _kdata_outer = _keymod.load_keys()
 _cloud_key = _keymod.streamlit_secret_key()
-if _cloud_key:
-    _active_label = "from Streamlit secrets ✓"
-elif _kdata_outer.get("keys"):
-    _active_label = _kdata_outer["keys"][_kdata_outer.get("active", 0)]["label"]
-else:
-    _active_label = "no key set"
+_active_source = _keymod.active_key_source()
+_active_key_value = _keymod.active_key()
+_active_tail = (_active_key_value[-6:] if _active_key_value else "—")
 
-with st.sidebar.expander(f"🔑 RapidAPI keys  ·  active: {_active_label}",
-                         expanded=False):
+with st.sidebar.expander(
+    f"🔑 RapidAPI keys  ·  using: {_active_source} (…{_active_tail})",
+    expanded=False,
+):
     _kdata = _keymod.load_keys()
     _klist = _kdata.get("keys") or []
 
-    # Show cloud secret status FIRST — most important when deployed
+    # Show priority + force-refresh button
+    st.markdown(f"""
+    <div style="background: rgba(200,152,52,0.08); border-left: 3px solid var(--gold);
+                padding: 8px 10px; font-family:'JetBrains Mono',monospace;
+                font-size:11px; color:var(--paper); margin-bottom:10px;">
+      <b style="color:var(--gold);">PRIORITY (highest first):</b><br>
+      1. Local key in this session (added below)<br>
+      2. Streamlit Cloud secret<br>
+      3. .env file<br>
+      <br>
+      <b>Currently active:</b>
+      <span style="color:#7bcb6a;">{_active_source}</span><br>
+      <b>Key tail:</b>
+      <span style="color:var(--gold);">…{_active_tail}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Show cloud secret separately if it exists (so user knows it's there as fallback)
     if _cloud_key:
-        st.markdown(f"""
-        <div style="background: rgba(122,203,106,0.10); border-left: 3px solid #7bcb6a;
-                    padding: 8px 10px; font-family:'JetBrains Mono',monospace;
-                    font-size:11px; color:var(--paper); margin-bottom:10px;">
-          <b style="color:#7bcb6a;">✓ STREAMLIT SECRET LOADED</b><br>
-          <span style="color:var(--muted);">
-            RAPIDAPI_KEY = …{_cloud_key[-6:]}<br>
-            This key is being used for ALL API calls. To rotate it, edit the
-            Secrets section in your Streamlit Cloud app settings.
-          </span>
-        </div>
-        """, unsafe_allow_html=True)
+        st.caption(f"🌐 Streamlit secret detected: …{_cloud_key[-6:]} "
+                   f"(used as fallback if no local key)")
+
+    # Force-refresh button — clears all API caches without changing keys
+    if st.button("🔄 Force refresh API caches",
+                 width="stretch", key="btn_force_refresh"):
+        st.cache_data.clear()
+        st.success("All API caches cleared. Next match list call will be fresh.")
+        st.rerun()
 
     if not _klist and not _cloud_key:
         st.markdown(

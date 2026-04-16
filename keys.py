@@ -103,23 +103,42 @@ def active_key() -> Optional[str]:
     """
     Return the currently-active API key.
 
-    Resolution order:
-      1. Streamlit Cloud secret  (RAPIDAPI_KEY in Secrets dashboard)
-      2. Active key from keys.json   (local interactive use)
-      3. RAPIDAPI_KEY env var       (legacy .env file)
+    Resolution order (HIGHEST → LOWEST priority):
+      1. Active key from keys.json   — user's interactively-added key
+                                       (so users can override the deploy
+                                       default by adding a fresh key in the UI)
+      2. Streamlit Cloud secret      (RAPIDAPI_KEY in Secrets dashboard)
+      3. RAPIDAPI_KEY env var        (legacy .env file)
       4. None
     """
-    k = streamlit_secret_key()
-    if k:
-        return k
-
     data = load_keys()
     keys = data.get("keys") or []
     if keys:
         idx = max(0, min(data.get("active", 0), len(keys) - 1))
-        return keys[idx]["key"]
+        k = keys[idx].get("key", "").strip()
+        if k:
+            return k
+
+    k = streamlit_secret_key()
+    if k:
+        return k
 
     return os.environ.get("RAPIDAPI_KEY")
+
+
+def active_key_source() -> str:
+    """Return a human-readable label for where the active key came from."""
+    data = load_keys()
+    keys = data.get("keys") or []
+    if keys:
+        idx = max(0, min(data.get("active", 0), len(keys) - 1))
+        if keys[idx].get("key", "").strip():
+            return f"local: {keys[idx].get('label', '?')}"
+    if streamlit_secret_key():
+        return "Streamlit Cloud secret"
+    if os.environ.get("RAPIDAPI_KEY"):
+        return ".env file"
+    return "no key"
 
 
 def add_key(label: str, key: str, make_active: bool = True) -> dict:
