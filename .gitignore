@@ -1,0 +1,13 @@
+.env
+keys.json
+.streamlit/secrets.toml
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+
+# DO commit models/ — it has the trained model + cached intel that
+# the app needs to run. Just exclude any local debug PNGs.
+models/*.png
+
