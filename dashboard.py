@@ -1741,24 +1741,32 @@ with tab_pre:
             'than the model. Shown for analytical comparison only.</div>',
             unsafe_allow_html=True,
         )
-        odds_cols = st.columns(len([t for t in wp.keys() if wp[t] > 0.01]))
-        idx = 0
-        for team, prob in sorted(wp.items(), key=lambda x: -x[1]):
-            if prob < 0.01:
-                continue
-            fair_odds = 1 / prob if prob > 0 else 999
-            with odds_cols[idx]:
-                st.markdown(f"""
-                <div class="ai-card" style="text-align:center;">
-                  <div class="ai-eyebrow">{team[:22]}</div>
-                  <div class="ai-big">{fair_odds:.2f}</div>
-                  <div class="ai-sub">decimal odds</div>
-                  <div class="ai-sub" style="margin-top:4px;">
-                    Win prob: {prob*100:.1f}%
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-            idx += 1
+        # Pre-compute the list of (team, prob) to display so the column
+        # count and the iteration use the EXACT same filter.
+        teams_to_show = [(t, p) for t, p in
+                          sorted(wp.items(), key=lambda x: -x[1])
+                          if p >= 0.01]
+        if teams_to_show:
+            odds_cols = st.columns(len(teams_to_show))
+            for col, (team, prob) in zip(odds_cols, teams_to_show):
+                fair_odds = 1 / prob if prob > 0 else 999
+                with col:
+                    st.markdown(f"""
+                    <div class="ai-card" style="text-align:center;">
+                      <div class="ai-eyebrow">{team[:22]}</div>
+                      <div class="ai-big">{fair_odds:.2f}</div>
+                      <div class="ai-sub">decimal odds</div>
+                      <div class="ai-sub" style="margin-top:4px;">
+                        Win prob: {prob*100:.1f}%
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div style="color:var(--muted); padding:10px;">'
+                'Not enough probability mass to compute fair odds.</div>',
+                unsafe_allow_html=True,
+            )
 
         # ---- Predicted Innings Totals ----
         st.markdown('<div class="almanac-section">Predicted Innings Totals</div>',
