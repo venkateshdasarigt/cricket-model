@@ -30,7 +30,7 @@ from model import BallOutcomeModel
 from simulator import MonteCarloSimulator, MatchState
 from live_fetcher import (CricSheetReplayFetcher, BallEvent,
                           CricketLiveLineFetcher)
-from live_predict import LiveStateTracker, project_innings
+from live_predict import LiveStateTracker
 from match_intel import MatchIntelligence
 
 
@@ -955,9 +955,11 @@ should_predict = (
 
 if should_predict and state is not None and state.balls_bowled > 0:
     try:
-        over_pred = sim.simulate_over(state)
-        inn_pred = project_innings(sim, state, next_over_pred=over_pred)
-        nb_outcomes = sim.predict_next_ball_outcomes(state)
+        # ALL predictions now use REAL conditional distributions —
+        # no more XGBoost model in the live prediction loop.
+        over_pred = sim.realistic_next_over(state, intel=intel, n_sims=80)
+        inn_pred = sim.realistic_projected_total(state, intel=intel)
+        nb_outcomes = sim.predict_next_ball_outcomes(state, intel=intel)
         st.session_state.next_ball_outcomes = nb_outcomes
         st.session_state.last_pred = {
             "next_over_mean": float(over_pred["mean"]),
@@ -1334,7 +1336,8 @@ with tab_phase:
         if (st.session_state.phase_forecast is None
                 or last_event and last_event.ball_in_over == 6):
             try:
-                st.session_state.phase_forecast = sim.predict_phase_segments(state)
+                st.session_state.phase_forecast = sim.predict_phase_segments(
+                    state, intel=intel)
             except Exception as exc:
                 st.warning(f"Phase forecast error: {exc}")
 
