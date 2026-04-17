@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 CACHE_PATH = "models/match_intel.pkl"
-CACHE_VERSION = 6  # bump to invalidate (XI filtered to current season + player recent form)
+CACHE_VERSION = 7  # bump: added run-rate bucket + venue tilt to distributions
 
 
 @dataclass
@@ -398,8 +398,18 @@ class MatchIntelligence:
             if rrr <= 11:   return "medium"
             return "hard"
 
+        def _rr_bucket(row):
+            """Current run rate tells us about TODAY's pitch/conditions."""
+            if row["balls_so_far"] < 12:  # too early to judge
+                return "any"
+            rr = row["runs_so_far"] * 6 / row["balls_so_far"]
+            if rr < 7:     return "slow"
+            if rr < 9.5:   return "medium"
+            return "fast"
+
         df_sorted["wkts_bucket"] = df_sorted["wkts_so_far"].apply(_wkts_bucket)
         df_sorted["chase_bucket"] = df_sorted.apply(_chase_bucket, axis=1)
+        df_sorted["rr_bucket"] = df_sorted.apply(_rr_bucket, axis=1)
 
         def _outcome(row):
             if row["wides"] > 0 or row["noballs"] > 0:
@@ -417,33 +427,35 @@ class MatchIntelligence:
 
         df_sorted["outcome"] = df_sorted.apply(_outcome, axis=1)
 
-        # Group and count
-        grouped = (df_sorted.groupby(["phase", "wkts_bucket", "chase_bucket", "outcome"])
-                   .size().reset_index(name="count"))
-        # Compute probabilities per (phase, wkts, chase) bucket
-        bucket_totals = (grouped.groupby(["phase", "wkts_bucket", "chase_bucket"])
-                         ["count"].sum().reset_index(name="total"))
-        grouped = grouped.merge(bucket_totals,
-                                 on=["phase", "wkts_bucket", "chase_bucket"])
+        # Group and count — now includes rr_bucket as a 4th dimension
+        grouped = (df_sorted.groupby(
+            ["phase", "wkts_bucket", "chase_bucket", "rr_bucket", "outcome"])
+            .size().reset_index(name="count"))
+        bucket_totals = (grouped.groupby(
+            ["phase", "wkts_bucket", "chase_bucket", "rr_bucket"])
+            ["count"].sum().reset_index(name="total"))
+        grouped = grouped.merge(
+            bucket_totals,
+            on=["phase", "wkts_bucket", "chase_bucket", "rr_bucket"])
         grouped["prob"] = grouped["count"] / grouped["total"]
 
-        # Build the lookup table
+        # Build the lookup table — keys now include rr_bucket
         outcomes_all = ["dot", "single", "double", "triple",
                         "four", "six", "wicket", "extra"]
-        for (phase, wkts, chase), bucket_df in grouped.groupby(
-                ["phase", "wkts_bucket", "chase_bucket"]):
+        for (phase, wkts, chase, rr), bucket_df in grouped.groupby(
+                ["phase", "wkts_bucket", "chase_bucket", "rr_bucket"]):
             dist = {o: 0.0 for o in outcomes_all}
             for _, r in bucket_df.iterrows():
                 dist[r["outcome"]] = float(r["prob"])
-            # Normalise (in case of 0-prob outcomes)
             s = sum(dist.values())
             if s > 0:
                 dist = {k: v / s for k, v in dist.items()}
-            intel.ball_outcomes[(str(phase), wkts, chase)] = {
+            intel.ball_outcomes[(str(phase), wkts, chase, rr)] = {
                 "dist": dist,
                 "n": int(bucket_df["total"].iloc[0]),
             }
-        print(f"[intel] Built {len(intel.ball_outcomes)} conditional ball-outcome buckets")
+        print(f"[intel] Built {len(intel.ball_outcomes)} conditional ball-outcome buckets "
+              f"(phase × wkts × chase × run-rate)")
 
         # ---- Likely playing 11 per team — CURRENT SEASON ONLY ----
         # Squads change every IPL season (transfers, auctions, retirements).
@@ -664,27 +676,38 @@ class MatchIntelligence:
                                              "based_on_matches": 0})
 
     def ball_outcome_dist(self, phase: str, wkts: int,
-                          chase_bucket: str = "none") -> Optional[dict]:
+                          chase_bucket: str = "none",
+                          rr_bucket: str = "any") -> Optional[dict]:
         """
         Real conditional probability of each ball outcome, drawn from
-        the user's IPL data. Falls back to nearest bucket if exact missing.
+        the user's IPL data.
+
+        4D lookup: (phase, wkts_bucket, chase_bucket, rr_bucket)
+        Falls back to broader buckets if the exact combo is too sparse
+        or missing (cascade: try with rr → without rr → fewer wkts).
         """
         wkts_b = ("0w" if wkts == 0 else
                   "1w" if wkts == 1 else
                   "2w" if wkts == 2 else
                   "3w" if wkts == 3 else
                   "45w" if wkts in (4, 5) else "6+w")
-        # Direct lookup
-        key = (phase, wkts_b, chase_bucket)
-        if key in self.ball_outcomes:
-            return self.ball_outcomes[key]
-        # Fall back: same phase + wkts, no chase
-        key = (phase, wkts_b, "none")
-        if key in self.ball_outcomes:
-            return self.ball_outcomes[key]
-        # Fall back: same phase, 0 wkts, no chase
-        key = (phase, "0w", "none")
-        return self.ball_outcomes.get(key)
+
+        # Cascade: try most-specific first, broaden on miss
+        for rr in (rr_bucket, "any"):
+            for wb in (wkts_b, "0w"):
+                for cb in (chase_bucket, "none"):
+                    key = (phase, wb, cb, rr)
+                    entry = self.ball_outcomes.get(key)
+                    if entry and entry.get("n", 0) >= 50:
+                        return entry
+        # Legacy 3-key format (pre-v7 cache compat)
+        for wb in (wkts_b, "0w"):
+            for cb in (chase_bucket, "none"):
+                key = (phase, wb, cb)
+                entry = self.ball_outcomes.get(key)
+                if entry and entry.get("n", 0) >= 30:
+                    return entry
+        return None
 
 
 if __name__ == "__main__":

@@ -484,15 +484,31 @@ class MonteCarloSimulator:
             recent_balls=list(state.recent_balls)
         )
 
+    @staticmethod
+    def _rr_bucket(runs: int, balls: int) -> str:
+        """Compute run-rate bucket from current innings runs/balls."""
+        if balls < 12:
+            return "any"
+        rr = runs * 6 / balls
+        if rr < 7:     return "slow"
+        if rr < 9.5:   return "medium"
+        return "fast"
+
     # ------------------------------------------------------------------
     # LIVE PREDICTION METHODS — all use real conditional distributions
     # ------------------------------------------------------------------
 
     def predict_next_ball_outcomes(self, state: 'MatchState',
-                                  intel=None) -> dict:
+                                  intel=None,
+                                  venue: str = "") -> dict:
         """
         Returns calibrated probabilities for the *very next ball* from
         REAL IPL data conditional distributions — NOT the XGBoost model.
+
+        Now includes:
+          • Run-rate context (today's pitch character)
+          • Venue tilt (boundary-heavy vs spin-friendly)
+          • Player tilt (striker SR, bowler ECO, H2H)
 
         Returns: {dot, single, double, boundary, six, wicket, extra}
         """
@@ -517,16 +533,32 @@ class MonteCarloSimulator:
             elif rrr <= 11:   chase_bucket = "medium"
             else:             chase_bucket = "hard"
 
-        # Get real distribution from measured data
+        # Get real distribution — now with run-rate context
+        rr_b = self._rr_bucket(state.runs_scored, state.balls_bowled)
         base = None
         if intel:
-            bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket)
+            bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket, rr_b)
             if bucket and bucket.get("n", 0) >= 30:
                 base = dict(bucket["dist"])
         if base is None:
             base = {"dot": 0.38, "single": 0.30, "double": 0.06,
                     "triple": 0.012, "four": 0.11, "six": 0.05,
                     "wicket": 0.045, "extra": 0.043}
+
+        # Venue tilt — boundary-heavy venues boost 4s/6s, spin-friendly boost dots
+        LEAGUE_AVG_RPO = 8.4
+        if intel and venue:
+            vintel = intel.venue(venue)
+            venue_phase_rpo = vintel.get("phase_rpo", {}).get(phase)
+            if venue_phase_rpo:
+                venue_mult = max(0.75, min(1.35,
+                    venue_phase_rpo / LEAGUE_AVG_RPO))
+                base["four"]   *= venue_mult
+                base["six"]    *= venue_mult
+                base["single"] *= (venue_mult * 0.5 + 0.5)  # dampened
+                if venue_mult < 0.95:  # spin-friendly venue
+                    base["dot"] *= (1 + (1 - venue_mult))
+                    base["wicket"] *= (1 + (1 - venue_mult) * 0.5)
 
         # Player tilts (if intel has the current striker/bowler stats)
         LEAGUE_BOUNDARY = 14.0
@@ -627,9 +659,12 @@ class MonteCarloSimulator:
                     elif rrr <= 11:   chase_bucket = "medium"
                     else:             chase_bucket = "hard"
 
+                # Run-rate bucket from CURRENT match state (captures pitch)
+                rr_b = self._rr_bucket(state.runs_scored + runs,
+                                        state.balls_bowled + legal_balls)
                 base = None
                 if intel:
-                    bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket)
+                    bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket, rr_b)
                     if bucket and bucket.get("n", 0) >= 30:
                         base = dict(bucket["dist"])
                 if base is None:
@@ -732,9 +767,10 @@ class MonteCarloSimulator:
                     elif rrr <= 11:   chase_bucket = "medium"
                     else:             chase_bucket = "hard"
 
+                rr_b = self._rr_bucket(runs, balls)
                 base = None
                 if intel:
-                    bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket)
+                    bucket = intel.ball_outcome_dist(phase, wkts, chase_bucket, rr_b)
                     if bucket and bucket.get("n", 0) >= 30:
                         base = dict(bucket["dist"])
                 if base is None:
