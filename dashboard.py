@@ -1096,7 +1096,7 @@ with tab_now:
                 <div class="ai-card">
                   <div class="ai-eyebrow">🤖 AI · Projected Total</div>
                   <div class="ai-headline">{proj:.0f}</div>
-                  <div class="ai-sub">P10–P90: {p10:.0f}–{p90:.0f} runs</div>
+                  <div class="ai-sub">Bad day–Great day: {p10:.0f}–{p90:.0f} runs</div>
                 </div>"""
             else:
                 proj_html = """
@@ -1346,7 +1346,8 @@ with tab_phase:
             '<div style="font-family: \'JetBrains Mono\', monospace; '
             'font-size:12px; color:var(--muted); margin-bottom:14px;">'
             'Each card forecasts runs the AI expects in that phase, with '
-            'P10–P90 confidence band. Red border = current phase.</div>',
+            'Range shows bad-day to great-day outcomes (80% of simulations fall inside). '
+            'Red border = current phase.</div>',
             unsafe_allow_html=True)
 
         cols = st.columns(len(forecasts) if forecasts else 4)
@@ -1366,7 +1367,7 @@ with tab_phase:
                     <div class="phase-card {cls}">
                       <div class="phase-name">{ph['label']}</div>
                       <div class="phase-runs">{ph['predicted_runs']:.0f}</div>
-                      <div class="phase-band">P10–P90: {ph['p10']:.0f}–{ph['p90']:.0f}</div>
+                      <div class="phase-band">Bad day–Great day: {ph['p10']:.0f}–{ph['p90']:.0f}</div>
                       <div class="phase-band" style="margin-top:6px; color:var(--red-soft);">
                         ~{ph['predicted_wickets']:.1f} wkts
                       </div>
@@ -1689,7 +1690,7 @@ with tab_pre:
             <div class="ai-card">
               <div class="ai-eyebrow">{ft['name']} · BAT FIRST</div>
               <div class="ai-big">{ft['median']:.0f}/{ft['wickets_mean']:.0f}</div>
-              <div class="ai-sub">P10–P90: {ft['p10']:.0f}–{ft['p90']:.0f} runs</div>
+              <div class="ai-sub">Bad day–Great day: {ft['p10']:.0f}–{ft['p90']:.0f} runs</div>
             </div>
             """, unsafe_allow_html=True)
         with sc2:
@@ -1697,7 +1698,7 @@ with tab_pre:
             <div class="ai-card">
               <div class="ai-eyebrow">{sd['name']} · CHASING</div>
               <div class="ai-big">{sd['median']:.0f}/{sd['wickets_mean']:.0f}</div>
-              <div class="ai-sub">P10–P90: {sd['p10']:.0f}–{sd['p90']:.0f} runs</div>
+              <div class="ai-sub">Bad day–Great day: {sd['p10']:.0f}–{sd['p90']:.0f} runs</div>
             </div>
             """, unsafe_allow_html=True)
 

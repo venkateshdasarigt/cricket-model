@@ -509,10 +509,14 @@ class MonteCarloSimulator:
         }
 
     def predict_phase_segments(self, state: 'MatchState',
-                               phases: list[tuple[str, int, int]] | None = None
+                               phases: list[tuple[str, int, int]] | None = None,
+                               intel=None,
+                               batting_team_stats: dict | None = None,
+                               bowling_team_stats: dict | None = None,
                                ) -> list[dict]:
         """
-        Predict runs scored in each remaining phase of the innings.
+        Predict runs scored in each remaining phase of the innings using
+        REAL conditional ball-outcome distributions (not the XGBoost model).
 
         Default phase boundaries (over numbers, 1-indexed inclusive):
           • Powerplay      : 1-6
@@ -527,13 +531,27 @@ class MonteCarloSimulator:
                 ("Middle 2 (11-15)", 11, 15),
                 ("Death (16-20)",    16, 20),
             ]
+
+        # Load intel for conditional distributions
+        if intel is None:
+            try:
+                from match_intel import MatchIntelligence
+                intel = MatchIntelligence.load_or_build("data")
+            except Exception:
+                intel = None
+
         current_over = state.balls_bowled // 6 + 1  # 1-indexed
+        n_sims = min(self.n_sims, 100)
         results: list[dict] = []
-        rolling = self._copy_state(state)
+
+        # Ball outcome mapping
+        outcomes_order = ["dot", "single", "double", "triple",
+                          "four", "six", "wicket", "extra"]
+        runs_per = [0, 1, 2, 3, 4, 6, 0, 1]
+        is_legal = [True, True, True, True, True, True, True, False]
 
         for label, lo, hi in phases:
             if hi < current_over:
-                # Phase already completed
                 results.append({
                     "label": label,
                     "status": "completed",
@@ -543,21 +561,68 @@ class MonteCarloSimulator:
                 })
                 continue
 
-            overs_in_phase = hi - max(lo, current_over) + 1
-            phase_run_dist = np.zeros(self.n_sims)
-            phase_wkt_dist = np.zeros(self.n_sims)
+            # How many overs remain in THIS phase
+            first_over = max(lo, current_over)
+            overs_in_phase = hi - first_over + 1
+            balls_in_phase = overs_in_phase * 6
 
-            for _ in range(overs_in_phase):
-                rolling.ball_in_over = 1
-                over_result = self.simulate_over(rolling)
-                phase_run_dist += over_result["distribution"]
-                # Track wickets via mean prediction (cheap proxy)
-                ob = self.predict_next_ball_outcomes(rolling)
-                phase_wkt_dist += ob["wicket"] * 6  # rough: P × 6 balls
-                # Advance state by mean over outcome
-                rolling.runs_scored += int(round(over_result["mean"]))
-                rolling.balls_bowled += 6
-                rolling.over_num = rolling.balls_bowled // 6
+            phase_name = ("powerplay" if lo <= 6
+                          else "middle" if lo <= 15
+                          else "death")
+
+            phase_run_dist = np.zeros(n_sims)
+            phase_wkt_dist = np.zeros(n_sims)
+
+            for sim in range(n_sims):
+                runs = 0
+                wkts = state.wickets_fallen
+                balls = 0
+                target = state.target
+                runs_so_far_total = state.runs_scored
+
+                for ball in range(balls_in_phase):
+                    if wkts >= 10:
+                        break
+                    if target and (runs_so_far_total + runs) >= target:
+                        break
+
+                    # Chase pressure bucket
+                    chase_bucket = "none"
+                    if target:
+                        total_balls_gone = state.balls_bowled + balls
+                        needed = max(0, target - runs_so_far_total - runs)
+                        bl = max(1, 120 - total_balls_gone)
+                        rrr = needed * 6 / bl
+                        if needed <= 0:
+                            chase_bucket = "none"
+                        elif rrr <= 8:    chase_bucket = "easy"
+                        elif rrr <= 11:   chase_bucket = "medium"
+                        else:             chase_bucket = "hard"
+
+                    # Get real distribution
+                    base = None
+                    if intel:
+                        bucket = intel.ball_outcome_dist(
+                            phase_name, wkts, chase_bucket)
+                        if bucket and bucket.get("n", 0) >= 30:
+                            base = dict(bucket["dist"])
+                    if base is None:
+                        base = {"dot": 0.38, "single": 0.30, "double": 0.06,
+                                "triple": 0.012, "four": 0.11, "six": 0.05,
+                                "wicket": 0.045, "extra": 0.043}
+
+                    probs = np.array([base.get(o, 0) for o in outcomes_order])
+                    probs = probs / probs.sum()
+                    idx = int(np.random.choice(8, p=probs))
+                    r = runs_per[idx]
+                    runs += r
+                    if outcomes_order[idx] == "wicket":
+                        wkts += 1
+                    if is_legal[idx]:
+                        balls += 1
+
+                phase_run_dist[sim] = runs
+                phase_wkt_dist[sim] = wkts - state.wickets_fallen
 
             results.append({
                 "label": label,
