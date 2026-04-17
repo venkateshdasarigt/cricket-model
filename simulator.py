@@ -1847,3 +1847,4 @@ if __name__ == "__main__":
           f"(confidence: {value['confidence']})")
     if value['quarter_kelly_stake'] > 0:
         print(f"  >>> Quarter-Kelly stake: {value['quarter_kelly_stake']:.1%} of bankroll")
+# Force rebuild 1776417751
