@@ -1035,8 +1035,9 @@ st.markdown(f"""
 # TABS
 # ---------------------------------------------------------------------------
 
-tab_now, tab_phase, tab_pre, tab_players = st.tabs([
-    "🔴 Now", "📊 Phase Forecast", "🎯 Pre-Match AI", "👥 Players & Squads"
+tab_now, tab_phase, tab_pre, tab_players, tab_venue = st.tabs([
+    "🔴 Now", "📊 Phase Forecast", "🎯 Pre-Match AI",
+    "👥 Players & Squads", "🏟 Venue"
 ])
 
 
@@ -1230,6 +1231,52 @@ with tab_now:
             strip += f'<span class="recent-ball {cls}">{c}</span>'
         st.markdown(f'<div style="padding:8px 0 18px 0;">{strip or "<i style=\'color:var(--muted)\'>Awaiting first ball</i>"}</div>',
                     unsafe_allow_html=True)
+
+        # ---- Ask the AI Q&A box ----
+        from ask_ai import answer_question
+        st.markdown('<div class="almanac-section">💬 Ask the AI</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-family:\'JetBrains Mono\',monospace; font-size:11px; '
+            'color:var(--muted); margin-bottom:8px;">'
+            'Try: "Probability of 10+ runs next over?"  ·  "Chance of wicket in 6 balls?"  ·  '
+            '"What\'s the projected total?"</div>',
+            unsafe_allow_html=True,
+        )
+
+        qcol1, qcol2 = st.columns([4, 1])
+        with qcol1:
+            question = st.text_input(
+                "Your question",
+                placeholder="What's the probability of 10+ runs in the next over?",
+                label_visibility="collapsed",
+                key="ask_ai_input",
+            )
+        with qcol2:
+            ask = st.button("Ask", width="stretch", key="ask_ai_btn")
+
+        # Auto-answer if user pressed Enter (Streamlit fires the input change)
+        if (ask or question) and question.strip():
+            try:
+                result = answer_question(question, state, sim, intel,
+                                          venue=venue)
+                conf_color = ("#7bcb6a" if result["confidence"] == "high"
+                              else "var(--gold)" if result["confidence"] == "mid"
+                              else "var(--muted)")
+                st.markdown(f"""
+                <div class="ai-card" style="margin-top:8px;">
+                  <div class="ai-eyebrow" style="color:{conf_color};">
+                    🤖 AI · confidence: {result['confidence'].upper()}
+                  </div>
+                  <div style="margin-top:8px; color:var(--paper);
+                              font-family:'Geist',sans-serif; font-size:14px;
+                              line-height:1.6; white-space:pre-line;">
+                    {result['answer']}
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+            except Exception as exc:
+                st.error(f"Q&A error: {exc}")
 
         # Row 4 — momentum chart
         st.markdown('<div class="almanac-section">Momentum · Actual vs AI Predicted</div>',
@@ -1683,6 +1730,36 @@ with tab_pre:
         st.markdown(f'<div class="ai-card">{wp_html}</div>',
                     unsafe_allow_html=True)
 
+        # ---- Fair Odds (model-implied, educational only) ----
+        st.markdown('<div class="almanac-section">📊 Model-Implied Fair Odds (educational)</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-family:\'JetBrains Mono\',monospace; font-size:11px; '
+            'color:var(--muted); margin-bottom:8px;">'
+            'Fair odds = 1 / win probability. If a bookmaker offers odds '
+            'BIGGER than this, they think the team is less likely to win '
+            'than the model. Shown for analytical comparison only.</div>',
+            unsafe_allow_html=True,
+        )
+        odds_cols = st.columns(len([t for t in wp.keys() if wp[t] > 0.01]))
+        idx = 0
+        for team, prob in sorted(wp.items(), key=lambda x: -x[1]):
+            if prob < 0.01:
+                continue
+            fair_odds = 1 / prob if prob > 0 else 999
+            with odds_cols[idx]:
+                st.markdown(f"""
+                <div class="ai-card" style="text-align:center;">
+                  <div class="ai-eyebrow">{team[:22]}</div>
+                  <div class="ai-big">{fair_odds:.2f}</div>
+                  <div class="ai-sub">decimal odds</div>
+                  <div class="ai-sub" style="margin-top:4px;">
+                    Win prob: {prob*100:.1f}%
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+            idx += 1
+
         # ---- Predicted Innings Totals ----
         st.markdown('<div class="almanac-section">Predicted Innings Totals</div>',
                     unsafe_allow_html=True)
@@ -2046,6 +2123,186 @@ with tab_players:
                           {rows}
                         </div>
                         """, unsafe_allow_html=True)
+
+
+# =============================================================================
+# TAB 5 — VENUE ANALYSIS
+# =============================================================================
+
+with tab_venue:
+    st.markdown(f'<div class="almanac-section">🏟 {venue or "Venue"} — Full Analysis</div>',
+                unsafe_allow_html=True)
+
+    if not venue:
+        st.info("Pick a match to see venue analysis.")
+    else:
+        vintel = intel.venue(venue)
+        venue_chase = intel.venue_chase(venue)
+
+        if vintel.get("matches", 0) == 0:
+            st.markdown(
+                f'<div style="color:var(--muted); padding:20px;">'
+                f'No historical data for "<b>{venue}</b>" in our IPL dataset. '
+                f'It may be a venue that hasn\'t hosted IPL matches '
+                f'(e.g. PSL ground).</div>',
+                unsafe_allow_html=True)
+        else:
+            # Top headline cards
+            v1, v2, v3, v4 = st.columns(4)
+            with v1:
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">Total IPL matches</div>
+                  <div class="ai-big">{vintel.get('matches', 0)}</div>
+                  <div class="ai-sub">in our dataset</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with v2:
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">Avg 1st innings</div>
+                  <div class="ai-big">{vintel.get('avg_first_innings', 0):.0f}</div>
+                  <div class="ai-sub">par score: {vintel.get('par_score', 0):.0f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with v3:
+                chase_pct = (venue_chase.get("chase_wins", 0) /
+                             max(venue_chase.get("matches", 1), 1) * 100)
+                cls = ("win-good" if chase_pct > 55 else
+                       "win-bad" if chase_pct < 45 else "win-mid")
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">Chase win %</div>
+                  <div class="ai-big {cls}">{chase_pct:.0f}%</div>
+                  <div class="ai-sub">{'chase-friendly' if chase_pct > 55 else 'bat-first friendly' if chase_pct < 45 else 'balanced'}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with v4:
+                toss_w = venue_chase.get("toss_winner_wins", 0)
+                tw_pct = (toss_w / max(venue_chase.get("matches", 1), 1) * 100)
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">Toss winner ➜ match win</div>
+                  <div class="ai-big">{tw_pct:.0f}%</div>
+                  <div class="ai-sub">toss matters {'a lot' if abs(tw_pct - 50) > 10 else 'mildly'}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Phase RPO breakdown
+            st.markdown('<div class="almanac-section">Phase Run Rates (per over)</div>',
+                        unsafe_allow_html=True)
+            phase_rpo = vintel.get("phase_rpo", {})
+            pp1, pp2, pp3 = st.columns(3)
+            for col, (phase_name, label, league_avg) in zip(
+                [pp1, pp2, pp3],
+                [("powerplay", "Powerplay (1-6)", 8.4),
+                 ("middle", "Middle (7-15)", 7.9),
+                 ("death", "Death (16-20)", 10.6)],
+            ):
+                rpo = phase_rpo.get(phase_name, 0)
+                diff = rpo - league_avg
+                arrow = "↑" if diff > 0 else "↓"
+                cls = "win-good" if diff > 0 else "win-bad"
+                with col:
+                    st.markdown(f"""
+                    <div class="phase-card">
+                      <div class="phase-name">{label}</div>
+                      <div class="phase-runs">{rpo:.1f}</div>
+                      <div class="phase-band">vs league {league_avg:.1f}</div>
+                      <div class="phase-band" style="margin-top:4px;">
+                        <span class="{cls}">{arrow} {abs(diff):.1f}</span>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            # Toss decision patterns
+            st.markdown('<div class="almanac-section">Toss Patterns</div>',
+                        unsafe_allow_html=True)
+            te1, te2 = st.columns(2)
+            with te1:
+                eb = venue_chase.get("elected_bat", 0)
+                ef = venue_chase.get("elected_field", 0)
+                tot = max(eb + ef, 1)
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">When toss is won, captains chose…</div>
+                  <div style="margin-top:10px; font-family:'JetBrains Mono',monospace; font-size:13px;">
+                    <div class="prob-row">
+                      <span class="prob-label" style="width:60px;">FIELD</span>
+                      <div class="prob-track"><div class="prob-fill" style="width:{ef/tot*100:.0f}%; background: var(--gold);"></div></div>
+                      <span class="prob-pct">{ef/tot*100:.0f}%</span>
+                    </div>
+                    <div class="prob-row">
+                      <span class="prob-label" style="width:60px;">BAT</span>
+                      <div class="prob-track"><div class="prob-fill" style="width:{eb/tot*100:.0f}%; background: var(--red);"></div></div>
+                      <span class="prob-pct">{eb/tot*100:.0f}%</span>
+                    </div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with te2:
+                first_inn_wins = venue_chase.get("first_inn_wins", 0)
+                chase_wins = venue_chase.get("chase_wins", 0)
+                tot = max(first_inn_wins + chase_wins, 1)
+                st.markdown(f"""
+                <div class="ai-card">
+                  <div class="ai-eyebrow">Match outcome split</div>
+                  <div style="margin-top:10px; font-family:'JetBrains Mono',monospace; font-size:13px;">
+                    <div class="prob-row">
+                      <span class="prob-label" style="width:80px;">BAT FIRST</span>
+                      <div class="prob-track"><div class="prob-fill" style="width:{first_inn_wins/tot*100:.0f}%; background: var(--gold);"></div></div>
+                      <span class="prob-pct">{first_inn_wins/tot*100:.0f}%</span>
+                    </div>
+                    <div class="prob-row">
+                      <span class="prob-label" style="width:80px;">CHASING</span>
+                      <div class="prob-track"><div class="prob-fill" style="width:{chase_wins/tot*100:.0f}%; background: #7bcb6a;"></div></div>
+                      <span class="prob-pct">{chase_wins/tot*100:.0f}%</span>
+                    </div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Best players at this venue (from data)
+            st.markdown('<div class="almanac-section">Players who have performed here</div>',
+                        unsafe_allow_html=True)
+            st.caption("Note: stats are career-wide (not venue-specific) — venue-specific player breakdowns require additional data drilling.")
+
+            # Show interpretation
+            st.markdown('<div class="almanac-section">🤖 AI Verdict</div>',
+                        unsafe_allow_html=True)
+            verdict_parts = []
+            if chase_pct > 55:
+                verdict_parts.append(f"**Chase-friendly venue** — chasing teams win {chase_pct:.0f}% of matches here, so winning the toss usually means fielding first.")
+            elif chase_pct < 45:
+                verdict_parts.append(f"**Bat-first friendly** — only {chase_pct:.0f}% chase wins, so put runs on the board.")
+            else:
+                verdict_parts.append(f"**Balanced venue** — neither bat-first nor chasing has a clear edge ({chase_pct:.0f}% chase wins).")
+
+            death_rpo = phase_rpo.get("death", 10.6)
+            if death_rpo > 11.5:
+                verdict_parts.append(f"**Death overs go BIG** here — average {death_rpo:.1f}/over in the last 5 overs (vs league avg 10.6).")
+            elif death_rpo < 9.5:
+                verdict_parts.append(f"**Death overs are tight** — only {death_rpo:.1f}/over (bowlers find help here).")
+
+            pp_rpo = phase_rpo.get("powerplay", 8.4)
+            if pp_rpo > 9:
+                verdict_parts.append(f"**Powerplay-friendly** — {pp_rpo:.1f}/over in the first 6.")
+
+            avg = vintel.get("avg_first_innings", 165)
+            if avg > 175:
+                verdict_parts.append(f"**Batting paradise** — average 1st innings {avg:.0f}.")
+            elif avg < 155:
+                verdict_parts.append(f"**Bowling-friendly** — average 1st innings only {avg:.0f}.")
+
+            verdict_html = "<br><br>".join(verdict_parts) or "Average venue across all metrics."
+            st.markdown(f"""
+            <div class="ai-card" style="background: rgba(200,152,52,0.08); border-left: 3px solid var(--gold);">
+              <div style="font-family:'Geist',sans-serif; color:var(--paper);
+                          font-size:14px; line-height:1.6;">
+                {verdict_html}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 # Footer
